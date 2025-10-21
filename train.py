@@ -2,7 +2,6 @@
 
 import argparse
 import json
-import os
 import tempfile
 import time
 from contextlib import nullcontext
@@ -12,11 +11,11 @@ from typing import Any, Dict, List
 
 import bdh
 import numpy as np
-import requests
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from data_utils import ensure_tiny_shakespeare, prepare_translation_dataset
 from transformer import VanillaTransformer, VanillaTransformerConfig
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -58,7 +57,10 @@ TRANSFORMER_LEARNING_RATE = 3e-4
 TRANSFORMER_WEIGHT_DECAY = 0.05
 MAX_GRAD_NORM = 1.0
 
-input_file_path = os.path.join(os.path.dirname(__file__), "input.txt")
+DATA_DIR = Path(__file__).resolve().parent / "data"
+split_memmaps: Dict[str, np.memmap] = {}
+split_lengths: Dict[str, int] = {}
+DATA_METADATA: Dict[str, Any] = {}
 
 
 class MetricsLogger:
@@ -105,22 +107,12 @@ def compute_grad_norm(parameters) -> float:
     return float(torch.norm(stacked, 2).item())
 
 
-# Fetch the tiny Shakespeare dataset
-def fetch_data():
-    if not os.path.exists(input_file_path):
-        data_url = "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"
-        with open(input_file_path, "w") as f:
-            f.write(requests.get(data_url).text)
-
-
 def get_batch(split):
-    # treat the file as bytes
-    data = np.memmap(input_file_path, dtype=np.uint8, mode="r")
-    if split == "train":
-        data = data[: int(0.9 * len(data))]
-    else:
-        data = data[int(0.9 * len(data)) :]
-    ix = torch.randint(len(data) - BLOCK_SIZE, (BATCH_SIZE,))
+    data = split_memmaps[split]
+    data_len = split_lengths[split]
+    if data_len <= BLOCK_SIZE:
+        raise ValueError(f"Split {split} is too short for block size {BLOCK_SIZE}")
+    ix = torch.randint(data_len - BLOCK_SIZE, (BATCH_SIZE,))
     x = torch.stack(
         [torch.from_numpy((data[i : i + BLOCK_SIZE]).astype(np.int64)) for i in ix]
     )
@@ -158,6 +150,55 @@ def evaluate_split(model: nn.Module, split: str, num_iters: int = EVAL_ITERS) ->
     return float(losses_tensor.mean().item())
 
 
+def load_memmap(split: str, path: Path) -> None:
+    data = np.memmap(path, dtype=np.uint8, mode="r")
+    split_memmaps[split] = data
+    split_lengths[split] = len(data)
+
+
+def prepare_dataset(args) -> Dict[str, Any]:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+    if args.dataset == "tinyshakespeare":
+        dataset_info = ensure_tiny_shakespeare(DATA_DIR)
+        dataset_info.setdefault("base_language", "en")
+    else:
+        languages = args.languages or ["de", "cs"]
+        max_train_examples = None if args.max_train_examples <= 0 else args.max_train_examples
+        max_val_examples = None if args.max_val_examples <= 0 else args.max_val_examples
+        dataset_info = prepare_translation_dataset(
+            DATA_DIR,
+            source_languages=languages,
+            base_language=args.base_language,
+            max_train_examples=max_train_examples,
+            max_val_examples=max_val_examples,
+        )
+
+    load_memmap("train", Path(dataset_info["train_path"]))
+    load_memmap("val", Path(dataset_info["val_path"]))
+
+    train_tokens = int(dataset_info.get("train_tokens", 0))
+    val_tokens = int(dataset_info.get("val_tokens", 0))
+    tokens_per_step = BATCH_SIZE * BLOCK_SIZE
+    dataset_info["tokens_per_step"] = tokens_per_step
+    dataset_info["train_tokens"] = train_tokens
+    dataset_info["val_tokens"] = val_tokens
+    dataset_info["train_exposures_per_run"] = (
+        (tokens_per_step * MAX_ITERS) / train_tokens if train_tokens else None
+    )
+    eval_tokens_per_eval = tokens_per_step * EVAL_ITERS
+    num_evals = MAX_ITERS // LOG_FREQ
+    dataset_info["num_evaluations"] = num_evals
+    dataset_info["val_tokens_per_eval"] = eval_tokens_per_eval
+    dataset_info["val_exposures_per_run"] = (
+        (eval_tokens_per_eval * num_evals) / val_tokens if val_tokens else None
+    )
+
+    DATA_METADATA.clear()
+    DATA_METADATA.update(dataset_info)
+    return dataset_info
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Train BDH or a vanilla Transformer")
     parser.add_argument(
@@ -166,12 +207,64 @@ def parse_args():
         default="bdh",
         help="Which architecture to train (default: bdh)",
     )
+    parser.add_argument(
+        "--dataset",
+        choices=("tinyshakespeare", "wmt19"),
+        default="wmt19",
+        help="Dataset to train on (default: wmt19 translation)",
+    )
+    parser.add_argument(
+        "--languages",
+        nargs="+",
+        help="Source languages (non-English) to translate into English (wmt19 only).",
+    )
+    parser.add_argument(
+        "--base-language",
+        default="en",
+        help="Target/base language for translation datasets (default: en).",
+    )
+    parser.add_argument(
+        "--max-train-examples",
+        type=int,
+        default=100_000,
+        help="Max training examples per language (wmt19). Use 0 for all.",
+    )
+    parser.add_argument(
+        "--max-val-examples",
+        type=int,
+        default=4_000,
+        help="Max validation examples per language (wmt19). Use 0 for all.",
+    )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
-    fetch_data()
+    dataset_info = prepare_dataset(args)
+    train_tokens = dataset_info.get("train_tokens", 0)
+    val_tokens = dataset_info.get("val_tokens", 0)
+    languages = dataset_info.get("languages", [])
+    base_language = dataset_info.get("base_language", "en")
+
+    print(
+        "Dataset:",
+        dataset_info.get("dataset_name"),
+        "sources=",
+        ",".join(languages) if languages else "n/a",
+        "->",
+        base_language,
+    )
+    print(f"Train tokens: {train_tokens:,} | Val tokens: {val_tokens:,}")
+    if dataset_info.get("train_exposures_per_run"):
+        print(
+            "Approx. train token exposures per run:",
+            f"{dataset_info['train_exposures_per_run']:.2f}x",
+        )
+    if dataset_info.get("val_exposures_per_run"):
+        print(
+            "Approx. val token exposures per run:",
+            f"{dataset_info['val_exposures_per_run']:.2f}x",
+        )
 
     if args.model == "bdh":
         model = bdh.BDH(BDH_CONFIG).to(device)
@@ -225,6 +318,20 @@ if __name__ == "__main__":
             "learning_rate": lr,
             "weight_decay": weight_decay,
             "dropout": dropout,
+            "dataset": dataset_info.get("dataset_name"),
+            "dataset_languages": languages,
+            "dataset_base_language": base_language,
+            "train_token_count": train_tokens,
+            "val_token_count": val_tokens,
+            "tokens_per_step": dataset_info.get("tokens_per_step"),
+            "train_exposures_per_run": dataset_info.get("train_exposures_per_run"),
+            "val_tokens_per_eval": dataset_info.get("val_tokens_per_eval"),
+            "val_exposures_per_run": dataset_info.get("val_exposures_per_run"),
+            "num_evaluations": dataset_info.get("num_evaluations"),
+            "max_train_examples": dataset_info.get("max_train_examples"),
+            "max_val_examples": dataset_info.get("max_val_examples"),
+            "train_data_path": str(Path(dataset_info["train_path"]).resolve()),
+            "val_data_path": str(Path(dataset_info["val_path"]).resolve()),
         },
     )
 
@@ -320,8 +427,13 @@ if __name__ == "__main__":
     metrics_logger.flush()
     print("Training done, now generating a sample ")
     model.eval()
+    if args.dataset == "tinyshakespeare":
+        sample_prompt = "To be or "
+    else:
+        sample_lang = languages[0] if languages else "de"
+        sample_prompt = f"<src:{sample_lang}> Hallo Welt\n<tgt:{base_language}>"
     prompt = torch.tensor(
-        bytearray("To be or ", "utf-8"), dtype=torch.long, device=device
+        bytearray(sample_prompt, "utf-8"), dtype=torch.long, device=device
     ).unsqueeze(0)
     ret = model.generate(prompt, max_new_tokens=100, top_k=3)
     ret_decoded = bytes(ret.to(torch.uint8).to("cpu").squeeze(0)).decode(
