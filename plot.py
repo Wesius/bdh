@@ -71,6 +71,7 @@ def plot_series(
         return None
 
     plotted = False
+    legend_seen: Dict[str, bool] = {}
     fig, ax = plt.subplots(figsize=(11, 6))
     fig.suptitle(title)
 
@@ -101,6 +102,12 @@ def plot_series(
     plt.close(fig)
     print(f"Saved {metric} plot to {output_path}")
     return output_path
+
+
+COLOR_MAP = {
+    "bdh": "tab:blue",
+    "transformer": "tab:red",
+}
 
 
 def plot_run_train_vs_val(
@@ -143,6 +150,74 @@ def plot_run_train_vs_val(
     fig.savefig(output_path)
     plt.close(fig)
     print(f"Saved train/val plot to {output_path}")
+    return output_path
+
+
+def plot_combined_all_curves(
+    runs: Sequence[Dict[str, Any]],
+    title: str,
+    output_path: Path,
+) -> Optional[Path]:
+    if not runs:
+        print("No runs supplied for combined plot.")
+        return None
+
+    fig, ax = plt.subplots(figsize=(11, 6))
+    fig.suptitle(title)
+    plotted = False
+
+    for run in runs:
+        model_type = run.get("model_type", "model")
+        color = COLOR_MAP.get(model_type, "gray")
+        label_prefix = model_type
+        train_points = extract_train_points(run["records"])
+        val_points = extract_val_points(run["records"])
+
+        if train_points:
+            steps, values = zip(*train_points)
+            legend_label = f"{label_prefix} train"
+            show_label = legend_seen.get(legend_label) is None
+            legend_seen[legend_label] = True
+            ax.plot(
+                steps,
+                values,
+                color=color,
+                linestyle="-",
+                linewidth=2,
+                label=legend_label if show_label else None,
+            )
+            plotted = True
+
+        if val_points:
+            steps_val, values_val = zip(*val_points)
+            legend_label = f"{label_prefix} val"
+            show_label = legend_seen.get(legend_label) is None
+            legend_seen[legend_label] = True
+            ax.plot(
+                steps_val,
+                values_val,
+                color=color,
+                linestyle="--",
+                linewidth=2,
+                label=legend_label if show_label else None,
+            )
+            plotted = True
+
+    if not plotted:
+        plt.close(fig)
+        print("No data available for combined plot.")
+        return None
+
+    ax.set_ylabel("Cross-Entropy")
+    ax.set_xlabel("Step")
+    ax.legend()
+    ax.grid(True, linestyle="--", alpha=0.3)
+
+    plt.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path)
+    plt.close(fig)
+    print(f"Saved combined plot to {output_path}")
     return output_path
 
 
@@ -215,11 +290,14 @@ def main(argv: List[str]) -> int:
 
     train_output = output_dir / f"{output_name}_train.png"
     val_output = output_dir / f"{output_name}_val.png"
+    combined_output = output_dir / f"{output_name}_combined.png"
 
     any_plotted = False
     if plot_series(runs, title + " (train)", "train", extract_train_points, train_output):
         any_plotted = True
     if plot_series(runs, title + " (val)", "val", extract_val_points, val_output):
+        any_plotted = True
+    if plot_combined_all_curves(runs, title + " (train & val)", combined_output):
         any_plotted = True
 
     name_counts: Dict[str, int] = {}

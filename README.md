@@ -63,7 +63,7 @@ python train.py
 python train.py --model transformer
 ```
 
-Each training run now streams detailed metrics (train/validation losses, running averages, gradient norms, learning rate, wall-clock timings, and token counts) into timestamped JSON files under `metrics/train_metrics_<model>_<run_id>.json`, flushing updates every 100 optimization steps. Run `python plot.py` after training to overlay BDH and Transformer curves; separate train and validation PNGs (`..._train.png`, `..._val.png`) are written to `plots/` by default. The Transformer baseline widens to 8 layers × 312-d embeddings with a ×14 MLP (dropout 0, LR 3e-4, WD 0.05, grad clipping 1.0)—yielding ~25.3 M parameters, within 0.003% of BDH’s count—for apples-to-apples comparisons.
+Each training run now streams detailed metrics (train/validation losses, running averages, gradient norms, learning rate, wall-clock timings, and token counts) into timestamped JSON files under `metrics/train_metrics_<model>_<run_id>.json`, flushing updates every 100 optimization steps. Run `python plot.py` after training to overlay BDH and Transformer curves; combined four-line charts (`..._combined.png`), separate train/val overlays (`..._train.png`, `..._val.png`), and per-model train-vs-val plots (`<model>_*_train_val.png`) are written to `plots/` by default. The Transformer baseline widens to 8 layers × 312-d embeddings with a ×14 MLP (dropout 0, LR 3e-4, WD 0.05, grad clipping 1.0)—yielding ~25.3 M parameters, within 0.003% of BDH’s count—for apples-to-apples comparisons.
 
 <!--For visualization and interpretability analysis, explore the example notebooks in `notebooks/`.-->
 
