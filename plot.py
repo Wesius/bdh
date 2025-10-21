@@ -71,7 +71,6 @@ def plot_series(
         return None
 
     plotted = False
-    legend_seen: Dict[str, bool] = {}
     fig, ax = plt.subplots(figsize=(11, 6))
     fig.suptitle(title)
 
@@ -165,6 +164,7 @@ def plot_combined_all_curves(
     fig, ax = plt.subplots(figsize=(11, 6))
     fig.suptitle(title)
     plotted = False
+    legend_seen: Dict[str, bool] = {}
 
     for run in runs:
         model_type = run.get("model_type", "model")
