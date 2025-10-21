@@ -34,42 +34,19 @@ def plot_metrics(records: List[Dict[str, Any]], title: str, output_path: Path) -
     losses = [r["loss"] for r in records]
     window_losses = [r.get("loss_window_avg") for r in records]
     cumulative_losses = [r.get("loss_cumulative_avg") for r in records]
-    grad_norms = [r.get("grad_norm") for r in records]
-    lr_values = [r.get("learning_rate") for r in records]
-    step_duration = [r.get("step_duration_sec") for r in records]
 
-    fig, axes = plt.subplots(2, 2, figsize=(12, 8), sharex="col")
+    fig, ax = plt.subplots(figsize=(10, 6))
     fig.suptitle(title)
 
-    ax_loss = axes[0, 0]
-    ax_loss.plot(steps, losses, label="loss", alpha=0.6)
+    ax.plot(steps, losses, label="loss", alpha=0.6)
     if any(window_losses):
-        ax_loss.plot(steps, window_losses, label="window avg", linewidth=2)
+        ax.plot(steps, window_losses, label="window avg", linewidth=2)
     if any(cumulative_losses):
-        ax_loss.plot(steps, cumulative_losses, label="cumulative avg", linewidth=2)
-    ax_loss.set_ylabel("Cross-Entropy")
-    ax_loss.legend()
-    ax_loss.grid(True, linestyle="--", alpha=0.3)
-
-    ax_grad = axes[1, 0]
-    if any(grad_norms):
-        ax_grad.plot(steps, grad_norms, color="tab:orange")
-    ax_grad.set_ylabel("Grad Norm (L2)")
-    ax_grad.set_xlabel("Step")
-    ax_grad.grid(True, linestyle="--", alpha=0.3)
-
-    ax_lr = axes[0, 1]
-    if any(lr_values):
-        ax_lr.plot(steps, lr_values, color="tab:green")
-    ax_lr.set_ylabel("Learning Rate")
-    ax_lr.grid(True, linestyle="--", alpha=0.3)
-
-    ax_time = axes[1, 1]
-    if any(step_duration):
-        ax_time.plot(steps, step_duration, color="tab:red")
-    ax_time.set_ylabel("Step Time (s)")
-    ax_time.set_xlabel("Step")
-    ax_time.grid(True, linestyle="--", alpha=0.3)
+        ax.plot(steps, cumulative_losses, label="cumulative avg", linewidth=2)
+    ax.set_ylabel("Cross-Entropy")
+    ax.set_xlabel("Step")
+    ax.legend()
+    ax.grid(True, linestyle="--", alpha=0.3)
 
     plt.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
