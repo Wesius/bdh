@@ -25,7 +25,7 @@ def load_metrics(path: Path) -> Dict[str, Any]:
         return json.load(f)
 
 
-def plot_metrics(records: List[Dict[str, Any]], title: str) -> None:
+def plot_metrics(records: List[Dict[str, Any]], title: str, output_path: Path) -> None:
     if not records:
         print("No metric records to plot.")
         return
@@ -72,7 +72,10 @@ def plot_metrics(records: List[Dict[str, Any]], title: str) -> None:
     ax_time.grid(True, linestyle="--", alpha=0.3)
 
     plt.tight_layout()
-    plt.show()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path)
+    plt.close(fig)
+    print(f"Saved plot to {output_path}")
 
 
 def main(argv: List[str]) -> int:
@@ -89,6 +92,12 @@ def main(argv: List[str]) -> int:
         type=Path,
         default=Path(__file__).resolve().parent / "metrics",
         help="Directory to search for metrics files when --file is not provided.",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path(__file__).resolve().parent / "plots",
+        help="Directory to store generated plots (defaults to ./plots).",
     )
     args = parser.parse_args(argv)
 
@@ -110,7 +119,10 @@ def main(argv: List[str]) -> int:
     ]
     title = " | ".join(filter(None, title_bits))
 
-    plot_metrics(records, title)
+    output_dir = args.output_dir.expanduser()
+    output_path = output_dir / f"{metrics_file.stem}.png"
+
+    plot_metrics(records, title, output_path)
     return 0
 
 
