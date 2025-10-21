@@ -1,21 +1,24 @@
 import argparse
 import json
 import sys
+from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterable, List, Sequence
 
 import matplotlib.pyplot as plt
 
 
-def locate_latest_metrics_file(metrics_dir: Path) -> Path:
+def locate_latest_metrics_file(metrics_dir: Path, model: str | None = None) -> Path:
+    pattern = f"train_metrics_{model}_*.json" if model else "train_metrics_*.json"
     candidates = sorted(
-        metrics_dir.glob("train_metrics_*.json"),
+        metrics_dir.glob(pattern),
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     )
     if not candidates:
+        target = f"for model '{model}'" if model else ""
         raise FileNotFoundError(
-            f"No metrics JSON files found in {metrics_dir.resolve()}"
+            f"No metrics JSON files found {target} in {metrics_dir.resolve()}"
         )
     return candidates[0]
 
@@ -25,24 +28,56 @@ def load_metrics(path: Path) -> Dict[str, Any]:
         return json.load(f)
 
 
-def plot_metrics(records: List[Dict[str, Any]], title: str, output_path: Path) -> None:
-    if not records:
+def plot_comparison(
+    runs: Sequence[Dict[str, Any]],
+    title: str,
+    output_path: Path,
+) -> None:
+    if not runs:
         print("No metric records to plot.")
         return
 
-    steps = [r["step"] for r in records]
-    losses = [r["loss"] for r in records]
-    window_losses = [r.get("loss_window_avg") for r in records]
-    cumulative_losses = [r.get("loss_cumulative_avg") for r in records]
-
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=(11, 6))
     fig.suptitle(title)
 
-    ax.plot(steps, losses, label="loss", alpha=0.6)
-    if any(window_losses):
-        ax.plot(steps, window_losses, label="window avg", linewidth=2)
-    if any(cumulative_losses):
-        ax.plot(steps, cumulative_losses, label="cumulative avg", linewidth=2)
+    for run in runs:
+        records = run["records"]
+        label = run["label"]
+
+        train_points = []
+        for r in records:
+            if not r.get("log_step"):
+                continue
+            loss_value = (
+                r.get("train_loss_window_avg")
+                or r.get("loss_window_avg")
+                or r.get("train_loss")
+                or r.get("loss")
+            )
+            if loss_value is None:
+                continue
+            train_points.append((r["step"], loss_value))
+
+        val_points = [
+            (r["step"], r.get("val_loss"))
+            for r in records
+            if r.get("log_step") and r.get("val_loss") is not None
+        ]
+
+        if train_points:
+            steps, losses = zip(*train_points)
+            ax.plot(steps, losses, label=f"{label} train", linewidth=2)
+
+        if val_points:
+            steps_val, losses_val = zip(*val_points)
+            ax.plot(
+                steps_val,
+                losses_val,
+                linestyle="--",
+                linewidth=2,
+                label=f"{label} val",
+            )
+
     ax.set_ylabel("Cross-Entropy")
     ax.set_xlabel("Step")
     ax.legend()
@@ -60,9 +95,10 @@ def main(argv: List[str]) -> int:
         description="Plot training metrics recorded by train.py"
     )
     parser.add_argument(
-        "--file",
+        "--files",
         type=Path,
-        help="Path to metrics JSON file (defaults to latest in ./metrics)",
+        nargs="*",
+        help="Metrics JSON files to compare. If omitted, uses latest BDH and Transformer runs.",
     )
     parser.add_argument(
         "--metrics-dir",
@@ -78,28 +114,45 @@ def main(argv: List[str]) -> int:
     )
     args = parser.parse_args(argv)
 
-    metrics_file = args.file
-    if metrics_file is None:
-        metrics_file = locate_latest_metrics_file(args.metrics_dir)
-        print(f"Using latest metrics file: {metrics_file}")
+    metrics_files: List[Path] = []
+    if args.files:
+        metrics_files = [path.expanduser() for path in args.files]
     else:
-        metrics_file = metrics_file.expanduser()
+        for model in ("bdh", "transformer"):
+            try:
+                metrics_files.append(locate_latest_metrics_file(args.metrics_dir, model))
+            except FileNotFoundError as exc:
+                print(exc)
+        if not metrics_files:
+            raise FileNotFoundError(
+                "No metrics files found. Provide --files or run training first."
+            )
 
-    data = load_metrics(metrics_file)
-    metadata = data.get("metadata", {})
-    records = data.get("metrics", [])
+    runs: List[Dict[str, Any]] = []
+    labels_for_output: List[str] = []
+    for metrics_file in metrics_files:
+        data = load_metrics(metrics_file)
+        metadata = data.get("metadata", {})
+        records = data.get("metrics", [])
+        model_label = metadata.get("model_type", metrics_file.stem)
+        run_id = metadata.get("run_id")
+        label = model_label
+        if run_id:
+            label = f"{model_label} ({run_id})"
+        print(f"Loaded {metrics_file} for {label}")
+        runs.append({"records": records, "label": model_label})
+        labels_for_output.append(model_label)
 
-    title_bits = [
-        metadata.get("run_id", "training run"),
-        metadata.get("device"),
-        metadata.get("dtype"),
-    ]
-    title = " | ".join(filter(None, title_bits))
-
+    title = " vs. ".join(labels_for_output)
     output_dir = args.output_dir.expanduser()
-    output_path = output_dir / f"{metrics_file.stem}.png"
+    if len(labels_for_output) == 1:
+        output_name = metrics_files[0].stem
+    else:
+        unique_labels = "_".join(dict.fromkeys(labels_for_output))
+        output_name = f"comparison_{unique_labels}"
+    output_path = output_dir / f"{output_name}.png"
 
-    plot_metrics(records, title, output_path)
+    plot_comparison(runs, title, output_path)
     return 0
 
 

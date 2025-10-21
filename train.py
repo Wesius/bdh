@@ -53,6 +53,7 @@ MAX_ITERS = 3000
 LEARNING_RATE = 1e-3
 WEIGHT_DECAY = 0.1
 LOG_FREQ = 100
+EVAL_ITERS = 20
 
 input_file_path = os.path.join(os.path.dirname(__file__), "input.txt")
 
@@ -140,6 +141,20 @@ def eval(model):
     model.eval()
 
 
+@torch.no_grad()
+def evaluate_split(model: nn.Module, split: str, num_iters: int = EVAL_ITERS) -> float:
+    model.eval()
+    losses = []
+    for _ in range(num_iters):
+        x, y = get_batch(split)
+        with ctx:
+            _, loss = model(x, y)
+        losses.append(loss.detach())
+    model.train()
+    losses_tensor = torch.stack(losses)
+    return float(losses_tensor.mean().item())
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Train BDH or a vanilla Transformer")
     parser.add_argument(
@@ -206,6 +221,7 @@ if __name__ == "__main__":
     loss_window_total = 0.0
     loss_window_steps = 0
     loss_cumulative_total = 0.0
+    latest_val_loss = None
     train_start_time = time.time()
     last_step_time = train_start_time
 
@@ -213,10 +229,10 @@ if __name__ == "__main__":
         with ctx:
             logits, loss = model(x, y)
 
-        loss_value = float(loss.detach().item())
-        loss_window_total += loss_value
+        train_loss = float(loss.detach().item())
+        loss_window_total += train_loss
         loss_window_steps += 1
-        loss_cumulative_total += loss_value
+        loss_cumulative_total += train_loss
 
         scaler.scale(loss).backward()
         if scaler.is_enabled():
@@ -238,12 +254,19 @@ if __name__ == "__main__":
         cumulative_avg_loss = loss_cumulative_total / step
         window_index = (step - 1) // LOG_FREQ
 
+        is_log_step = step % LOG_FREQ == 0 or step == MAX_ITERS
+        val_loss = None
+        if is_log_step:
+            val_loss = evaluate_split(model, "val")
+            latest_val_loss = val_loss
+
         metrics_logger.add(
             {
                 "step": step,
-                "loss": loss_value,
-                "loss_window_avg": window_avg_loss,
-                "loss_cumulative_avg": cumulative_avg_loss,
+                "train_loss": train_loss,
+                "train_loss_window_avg": window_avg_loss,
+                "train_loss_cumulative_avg": cumulative_avg_loss,
+                "val_loss": val_loss if val_loss is not None else latest_val_loss,
                 "learning_rate": current_lr,
                 "grad_norm": grad_norm,
                 "tokens_processed": tokens_seen,
@@ -252,18 +275,19 @@ if __name__ == "__main__":
                 "wall_time_sec": wall_time_sec,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "window_index": window_index,
-                "log_step": step % LOG_FREQ == 0 or step == MAX_ITERS,
+                "log_step": is_log_step,
                 "model_type": args.model,
             }
         )
 
-        if step % LOG_FREQ == 0 or step == MAX_ITERS:
+        if is_log_step:
             print(
                 (
                     f"Step {step:5d}/{MAX_ITERS} "
-                    f"loss={loss_value:.4f} "
+                    f"train_loss={train_loss:.4f} "
                     f"window_avg_loss={window_avg_loss:.4f} "
                     f"cumulative_avg_loss={cumulative_avg_loss:.4f} "
+                    f"val_loss={val_loss:.4f} "
                     f"grad_norm={grad_norm:.4f} "
                     f"lr={current_lr:.6f} "
                     f"tokens_seen={tokens_seen} "
