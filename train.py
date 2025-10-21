@@ -178,8 +178,10 @@ if __name__ == "__main__":
             block_size=BLOCK_SIZE,
             n_layer=BDH_CONFIG.n_layer,
             n_head=BDH_CONFIG.n_head,
-            n_embd=BDH_CONFIG.n_embd,
+            # Adjust width and MLP expansion so total parameters match BDH (~25.3M)
+            n_embd=360,
             dropout=BDH_CONFIG.dropout,
+            mlp_hidden_multiplier=14,
         )
         model = VanillaTransformer(transformer_config).to(device)
 

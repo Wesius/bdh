@@ -15,6 +15,7 @@ class VanillaTransformerConfig:
     n_head: int = 4
     n_embd: int = 256
     dropout: float = 0.1
+    mlp_hidden_multiplier: int = 4
 
 
 class CausalSelfAttention(nn.Module):
@@ -61,7 +62,7 @@ class CausalSelfAttention(nn.Module):
 class MLP(nn.Module):
     def __init__(self, config: VanillaTransformerConfig):
         super().__init__()
-        hidden = 4 * config.n_embd
+        hidden = config.mlp_hidden_multiplier * config.n_embd
         self.net = nn.Sequential(
             nn.Linear(config.n_embd, hidden),
             nn.GELU(),

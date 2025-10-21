@@ -59,11 +59,11 @@ pip install -r requirements.txt
 # train BDH on a toy dataset
 python train.py
 
-# train a vanilla Transformer baseline on the same setup
+# train a vanilla Transformer baseline matched to BDH's parameter count
 python train.py --model transformer
 ```
 
-Each training run now streams detailed metrics (train/validation losses, running averages, gradient norms, learning rate, wall-clock timings, and token counts) into timestamped JSON files under `metrics/train_metrics_<model>_<run_id>.json`, flushing updates every 100 optimization steps. Run `python plot.py` after training to overlay BDH and Transformer curves; separate train and validation PNGs (`..._train.png`, `..._val.png`) are written to `plots/` by default.
+Each training run now streams detailed metrics (train/validation losses, running averages, gradient norms, learning rate, wall-clock timings, and token counts) into timestamped JSON files under `metrics/train_metrics_<model>_<run_id>.json`, flushing updates every 100 optimization steps. Run `python plot.py` after training to overlay BDH and Transformer curves; separate train and validation PNGs (`..._train.png`, `..._val.png`) are written to `plots/` by default. The Transformer baseline expands its embedding (360 dims) and MLP width (×14) so its parameter count (~25.3 M) matches BDH’s for apples-to-apples comparisons.
 
 <!--For visualization and interpretability analysis, explore the example notebooks in `notebooks/`.-->
 
