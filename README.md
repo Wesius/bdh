@@ -60,6 +60,8 @@ pip install -r requirements.txt
 python train.py
 ```
 
+Each training run now streams detailed metrics (loss, running averages, gradient norms, learning rate, wall-clock timings, and token counts) into timestamped JSON files under `metrics/train_metrics_<run_id>.json`, flushing updates every 100 optimization steps. Inspect these logs with tools such as `python -m json.tool` or `pandas`/`matplotlib` to track training curves in real time.
+
 <!--For visualization and interpretability analysis, explore the example notebooks in `notebooks/`.-->
 
 
