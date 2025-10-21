@@ -63,7 +63,7 @@ python train.py
 python train.py --model transformer
 ```
 
-Each training run now streams detailed metrics (train/validation losses, running averages, gradient norms, learning rate, wall-clock timings, and token counts) into timestamped JSON files under `metrics/train_metrics_<model>_<run_id>.json`, flushing updates every 100 optimization steps. Run `python plot.py` after training to overlay BDH and Transformer train/val loss curves; comparison PNGs are written to `plots/comparison_<model_list>.png` by default.
+Each training run now streams detailed metrics (train/validation losses, running averages, gradient norms, learning rate, wall-clock timings, and token counts) into timestamped JSON files under `metrics/train_metrics_<model>_<run_id>.json`, flushing updates every 100 optimization steps. Run `python plot.py` after training to overlay BDH and Transformer curves; separate train and validation PNGs (`..._train.png`, `..._val.png`) are written to `plots/` by default.
 
 <!--For visualization and interpretability analysis, explore the example notebooks in `notebooks/`.-->
 

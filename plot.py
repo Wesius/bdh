@@ -1,9 +1,8 @@
 import argparse
 import json
 import sys
-from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 import matplotlib.pyplot as plt
 
@@ -28,66 +27,73 @@ def load_metrics(path: Path) -> Dict[str, Any]:
         return json.load(f)
 
 
-def plot_comparison(
+def extract_train_points(records: Sequence[Dict[str, Any]]) -> List[tuple[int, float]]:
+    points: List[tuple[int, float]] = []
+    for r in records:
+        if not r.get("log_step"):
+            continue
+        loss_value = (
+            r.get("train_loss_window_avg")
+            or r.get("loss_window_avg")
+            or r.get("train_loss")
+            or r.get("loss")
+        )
+        if loss_value is None:
+            continue
+        points.append((int(r["step"]), float(loss_value)))
+    return points
+
+
+def extract_val_points(records: Sequence[Dict[str, Any]]) -> List[tuple[int, float]]:
+    return [
+        (int(r["step"]), float(r["val_loss"]))
+        for r in records
+        if r.get("log_step") and r.get("val_loss") is not None
+    ]
+
+
+def plot_series(
     runs: Sequence[Dict[str, Any]],
     title: str,
+    metric: str,
+    extractor: Callable[[Sequence[Dict[str, Any]]], List[tuple[int, float]]],
     output_path: Path,
-) -> None:
+) -> Optional[Path]:
     if not runs:
         print("No metric records to plot.")
-        return
+        return None
 
+    plotted = False
     fig, ax = plt.subplots(figsize=(11, 6))
     fig.suptitle(title)
 
     for run in runs:
         records = run["records"]
         label = run["label"]
+        points = extractor(records)
+        if not points:
+            continue
+        steps, values = zip(*points)
+        linestyle = "-" if metric == "train" else "--"
+        ax.plot(steps, values, label=f"{label}", linewidth=2, linestyle=linestyle)
+        plotted = True
 
-        train_points = []
-        for r in records:
-            if not r.get("log_step"):
-                continue
-            loss_value = (
-                r.get("train_loss_window_avg")
-                or r.get("loss_window_avg")
-                or r.get("train_loss")
-                or r.get("loss")
-            )
-            if loss_value is None:
-                continue
-            train_points.append((r["step"], loss_value))
-
-        val_points = [
-            (r["step"], r.get("val_loss"))
-            for r in records
-            if r.get("log_step") and r.get("val_loss") is not None
-        ]
-
-        if train_points:
-            steps, losses = zip(*train_points)
-            ax.plot(steps, losses, label=f"{label} train", linewidth=2)
-
-        if val_points:
-            steps_val, losses_val = zip(*val_points)
-            ax.plot(
-                steps_val,
-                losses_val,
-                linestyle="--",
-                linewidth=2,
-                label=f"{label} val",
-            )
+    if not plotted:
+        plt.close(fig)
+        print(f"No {metric} data available to plot.")
+        return None
 
     ax.set_ylabel("Cross-Entropy")
     ax.set_xlabel("Step")
-    ax.legend()
+    ax.legend(title=f"{metric.capitalize()} loss")
     ax.grid(True, linestyle="--", alpha=0.3)
 
     plt.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path)
     plt.close(fig)
-    print(f"Saved plot to {output_path}")
+    print(f"Saved {metric} plot to {output_path}")
+    return output_path
 
 
 def main(argv: List[str]) -> int:
@@ -150,9 +156,18 @@ def main(argv: List[str]) -> int:
     else:
         unique_labels = "_".join(dict.fromkeys(labels_for_output))
         output_name = f"comparison_{unique_labels}"
-    output_path = output_dir / f"{output_name}.png"
 
-    plot_comparison(runs, title, output_path)
+    train_output = output_dir / f"{output_name}_train.png"
+    val_output = output_dir / f"{output_name}_val.png"
+
+    any_plotted = False
+    if plot_series(runs, title + " (train)", "train", extract_train_points, train_output):
+        any_plotted = True
+    if plot_series(runs, title + " (val)", "val", extract_val_points, val_output):
+        any_plotted = True
+
+    if not any_plotted:
+        raise SystemExit("No data was plotted. Check that metrics files contain log_step entries.")
     return 0
 
 
