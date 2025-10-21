@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import tempfile
 import time
 from contextlib import nullcontext
