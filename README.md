@@ -58,9 +58,12 @@ pip install -r requirements.txt
 
 # train BDH on a toy dataset
 python train.py
+
+# train a vanilla Transformer baseline on the same setup
+python train.py --model transformer
 ```
 
-Each training run now streams detailed metrics (loss, running averages, gradient norms, learning rate, wall-clock timings, and token counts) into timestamped JSON files under `metrics/train_metrics_<run_id>.json`, flushing updates every 100 optimization steps. Run `python plot.py` after training to render plots from the latest metrics file; PNGs are written to `plots/train_metrics_<run_id>.png` for later review.
+Each training run now streams detailed metrics (loss, running averages, gradient norms, learning rate, wall-clock timings, and token counts) into timestamped JSON files under `metrics/train_metrics_<model>_<run_id>.json`, flushing updates every 100 optimization steps. Run `python plot.py` after training to render plots from the latest metrics file; PNGs are written to `plots/train_metrics_<model>_<run_id>.png` for later review.
 
 <!--For visualization and interpretability analysis, explore the example notebooks in `notebooks/`.-->
 

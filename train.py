@@ -1,5 +1,6 @@
 # Copyright Pathway Technology, Inc.
 
+import argparse
 import json
 import os
 import tempfile
@@ -15,6 +16,8 @@ import requests
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from transformer import VanillaTransformer, VanillaTransformerConfig
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # On a Mac you can also try
@@ -137,22 +140,49 @@ def eval(model):
     model.eval()
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Train BDH or a vanilla Transformer")
+    parser.add_argument(
+        "--model",
+        choices=("bdh", "transformer"),
+        default="bdh",
+        help="Which architecture to train (default: bdh)",
+    )
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
+    args = parse_args()
     fetch_data()
 
-    model = bdh.BDH(BDH_CONFIG).to(device)
+    if args.model == "bdh":
+        model = bdh.BDH(BDH_CONFIG).to(device)
+    else:
+        transformer_config = VanillaTransformerConfig(
+            vocab_size=BDH_CONFIG.vocab_size,
+            block_size=BLOCK_SIZE,
+            n_layer=BDH_CONFIG.n_layer,
+            n_head=BDH_CONFIG.n_head,
+            n_embd=BDH_CONFIG.n_embd,
+            dropout=BDH_CONFIG.dropout,
+        )
+        model = VanillaTransformer(transformer_config).to(device)
+
     model = torch.compile(model)
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY
     )
+
+    print(f"Training model: {args.model}")
 
     run_started_at = datetime.now(timezone.utc)
     run_id = run_started_at.strftime("%Y%m%dT%H%M%SZ")
     metrics_path = (
         Path(__file__).resolve().parent
         / "metrics"
-        / f"train_metrics_{run_id}.json"
+        / f"train_metrics_{args.model}_{run_id}.json"
     )
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     metrics_logger = MetricsLogger(
         metrics_path,
         metadata={
@@ -160,10 +190,12 @@ if __name__ == "__main__":
             "started_at": run_started_at.isoformat(),
             "device": str(device),
             "dtype": dtype,
+            "model_type": args.model,
             "max_iters": MAX_ITERS,
             "log_frequency": LOG_FREQ,
             "batch_size": BATCH_SIZE,
             "block_size": BLOCK_SIZE,
+            "trainable_params": trainable_params,
         },
     )
 
@@ -221,6 +253,7 @@ if __name__ == "__main__":
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "window_index": window_index,
                 "log_step": step % LOG_FREQ == 0 or step == MAX_ITERS,
+                "model_type": args.model,
             }
         )
 
