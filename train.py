@@ -176,10 +176,10 @@ if __name__ == "__main__":
         transformer_config = VanillaTransformerConfig(
             vocab_size=BDH_CONFIG.vocab_size,
             block_size=BLOCK_SIZE,
-            n_layer=BDH_CONFIG.n_layer,
-            n_head=BDH_CONFIG.n_head,
-            # Adjust width and MLP expansion so total parameters match BDH (~25.3M)
-            n_embd=360,
+            # Match BDH's parameter budget (~25.3M) with a more balanced GPT-style layout
+            n_layer=8,
+            n_head=8,
+            n_embd=312,
             dropout=BDH_CONFIG.dropout,
             mlp_hidden_multiplier=14,
         )
