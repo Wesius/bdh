@@ -1,5 +1,6 @@
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
@@ -25,6 +26,12 @@ def locate_latest_metrics_file(metrics_dir: Path, model: str | None = None) -> P
 def load_metrics(path: Path) -> Dict[str, Any]:
     with path.open("r") as f:
         return json.load(f)
+
+
+def sanitize_label(text: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9]+", "_", text.strip())
+    cleaned = cleaned.strip("_")
+    return cleaned or "run"
 
 
 def extract_train_points(records: Sequence[Dict[str, Any]]) -> List[tuple[int, float]]:
@@ -96,6 +103,49 @@ def plot_series(
     return output_path
 
 
+def plot_run_train_vs_val(
+    run: Dict[str, Any],
+    title: str,
+    output_path: Path,
+) -> Optional[Path]:
+    records = run["records"]
+    train_points = extract_train_points(records)
+    val_points = extract_val_points(records)
+
+    if not train_points and not val_points:
+        print(f"No train/val data available for {title}.")
+        return None
+
+    fig, ax = plt.subplots(figsize=(11, 6))
+    fig.suptitle(title)
+
+    if train_points:
+        steps, values = zip(*train_points)
+        ax.plot(steps, values, label="train", linewidth=2, linestyle="-")
+
+    if val_points:
+        steps_val, values_val = zip(*val_points)
+        ax.plot(
+            steps_val,
+            values_val,
+            label="val",
+            linewidth=2,
+            linestyle="--",
+        )
+
+    ax.set_ylabel("Cross-Entropy")
+    ax.set_xlabel("Step")
+    ax.legend(title="Metric")
+    ax.grid(True, linestyle="--", alpha=0.3)
+
+    plt.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path)
+    plt.close(fig)
+    print(f"Saved train/val plot to {output_path}")
+    return output_path
+
+
 def main(argv: List[str]) -> int:
     parser = argparse.ArgumentParser(
         description="Plot training metrics recorded by train.py"
@@ -142,11 +192,17 @@ def main(argv: List[str]) -> int:
         records = data.get("metrics", [])
         model_label = metadata.get("model_type", metrics_file.stem)
         run_id = metadata.get("run_id")
-        label = model_label
-        if run_id:
-            label = f"{model_label} ({run_id})"
-        print(f"Loaded {metrics_file} for {label}")
-        runs.append({"records": records, "label": model_label})
+        display_label = model_label if not run_id else f"{model_label} ({run_id})"
+        print(f"Loaded {metrics_file} for {display_label}")
+        runs.append(
+            {
+                "records": records,
+                "label": display_label,
+                "model_type": model_label,
+                "run_id": run_id,
+                "metrics_file": metrics_file,
+            }
+        )
         labels_for_output.append(model_label)
 
     title = " vs. ".join(labels_for_output)
@@ -165,6 +221,23 @@ def main(argv: List[str]) -> int:
         any_plotted = True
     if plot_series(runs, title + " (val)", "val", extract_val_points, val_output):
         any_plotted = True
+
+    name_counts: Dict[str, int] = {}
+    for idx, run in enumerate(runs):
+        base = run.get("model_type") or run.get("label") or f"run_{idx}"
+        safe_base = sanitize_label(base)
+        run_id = run.get("run_id")
+        if run_id:
+            safe_base = f"{safe_base}_{sanitize_label(run_id)}"
+        count = name_counts.get(safe_base, 0)
+        name_counts[safe_base] = count + 1
+        if count:
+            safe_base = f"{safe_base}_{count}"
+
+        pair_output = output_dir / f"{safe_base}_train_val.png"
+        pair_title = f"{run['label']} (train vs val)"
+        if plot_run_train_vs_val(run, pair_title, pair_output):
+            any_plotted = True
 
     if not any_plotted:
         raise SystemExit("No data was plotted. Check that metrics files contain log_step entries.")
