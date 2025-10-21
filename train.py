@@ -54,6 +54,9 @@ LEARNING_RATE = 1e-3
 WEIGHT_DECAY = 0.1
 LOG_FREQ = 100
 EVAL_ITERS = 20
+TRANSFORMER_LEARNING_RATE = 3e-4
+TRANSFORMER_WEIGHT_DECAY = 0.05
+MAX_GRAD_NORM = 1.0
 
 input_file_path = os.path.join(os.path.dirname(__file__), "input.txt")
 
@@ -172,7 +175,13 @@ if __name__ == "__main__":
 
     if args.model == "bdh":
         model = bdh.BDH(BDH_CONFIG).to(device)
+        lr = LEARNING_RATE
+        weight_decay = WEIGHT_DECAY
+        dropout = BDH_CONFIG.dropout
     else:
+        dropout = 0.0
+        lr = TRANSFORMER_LEARNING_RATE
+        weight_decay = TRANSFORMER_WEIGHT_DECAY
         transformer_config = VanillaTransformerConfig(
             vocab_size=BDH_CONFIG.vocab_size,
             block_size=BLOCK_SIZE,
@@ -180,14 +189,14 @@ if __name__ == "__main__":
             n_layer=8,
             n_head=8,
             n_embd=312,
-            dropout=BDH_CONFIG.dropout,
+            dropout=dropout,
             mlp_hidden_multiplier=14,
         )
         model = VanillaTransformer(transformer_config).to(device)
 
     model = torch.compile(model)
     optimizer = torch.optim.AdamW(
-        model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY
+        model.parameters(), lr=lr, weight_decay=weight_decay
     )
 
     print(f"Training model: {args.model}")
@@ -213,6 +222,9 @@ if __name__ == "__main__":
             "batch_size": BATCH_SIZE,
             "block_size": BLOCK_SIZE,
             "trainable_params": trainable_params,
+            "learning_rate": lr,
+            "weight_decay": weight_decay,
+            "dropout": dropout,
         },
     )
 
@@ -240,6 +252,9 @@ if __name__ == "__main__":
         if scaler.is_enabled():
             scaler.unscale_(optimizer)
         grad_norm = compute_grad_norm(model.parameters())
+
+        if MAX_GRAD_NORM is not None:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_GRAD_NORM)
 
         scaler.step(optimizer)
         scaler.update()
