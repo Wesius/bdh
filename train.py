@@ -45,23 +45,86 @@ torch.backends.cudnn.allow_tf32 = True  # allow tf32 on cudnn
 print(f"Using device: {device} with dtype {dtype}")
 
 
-# Configuration
-BDH_CONFIG = bdh.BDHConfig()
 BLOCK_SIZE = 512
 BATCH_SIZE = 32
 MAX_ITERS = 3000
-LEARNING_RATE = 1e-3
-WEIGHT_DECAY = 0.1
 LOG_FREQ = 100
 EVAL_ITERS = 20
-TRANSFORMER_LEARNING_RATE = 3e-4
-TRANSFORMER_WEIGHT_DECAY = 0.05
-MAX_GRAD_NORM = 1.0
 
 DATA_DIR = Path(__file__).resolve().parent / "data"
 split_memmaps: Dict[str, np.memmap] = {}
 split_lengths: Dict[str, int] = {}
 DATA_METADATA: Dict[str, Any] = {}
+
+
+SCALE_PRESETS = {
+    "1x": {
+        "bdh": {
+            "n_layer": 6,
+            "n_embd": 256,
+            "dropout": 0.1,
+            "n_head": 4,
+            "mlp_internal_dim_multiplier": 128,
+            "vocab_size": 256,
+        },
+        "transformer": {
+            "n_layer": 8,
+            "n_head": 8,
+            "n_embd": 312,
+            "dropout": 0.0,
+            "mlp_hidden_multiplier": 14,
+        },
+        "optim": {
+            "bdh": {"lr": 1e-3, "weight_decay": 0.1},
+            "transformer": {"lr": 3e-4, "weight_decay": 0.05},
+            "max_grad_norm": 1.0,
+        },
+    },
+    "3x": {
+        "bdh": {
+            "n_layer": 9,
+            "n_embd": 416,
+            "dropout": 0.1,
+            "n_head": 8,
+            "mlp_internal_dim_multiplier": 144,
+            "vocab_size": 256,
+        },
+        "transformer": {
+            "n_layer": 19,
+            "n_head": 8,
+            "n_embd": 352,
+            "dropout": 0.05,
+            "mlp_hidden_multiplier": 14,
+        },
+        "optim": {
+            "bdh": {"lr": 5e-4, "weight_decay": 0.08},
+            "transformer": {"lr": 2e-4, "weight_decay": 0.045},
+            "max_grad_norm": 1.2,
+        },
+    },
+    "10x": {
+        "bdh": {
+            "n_layer": 12,
+            "n_embd": 512,
+            "dropout": 0.1,
+            "n_head": 16,
+            "mlp_internal_dim_multiplier": 320,
+            "vocab_size": 256,
+        },
+        "transformer": {
+            "n_layer": 19,
+            "n_head": 12,
+            "n_embd": 576,
+            "dropout": 0.05,
+            "mlp_hidden_multiplier": 18,
+        },
+        "optim": {
+            "bdh": {"lr": 3e-4, "weight_decay": 0.08},
+            "transformer": {"lr": 1.5e-4, "weight_decay": 0.04},
+            "max_grad_norm": 1.5,
+        },
+    },
+}
 
 
 class MetricsLogger:
@@ -215,6 +278,12 @@ def parse_args():
         help="Dataset to train on (default: wmt19 translation)",
     )
     parser.add_argument(
+        "--scale",
+        choices=tuple(SCALE_PRESETS.keys()),
+        default="1x",
+        help="Model size preset relative to the 1x baseline",
+    )
+    parser.add_argument(
         "--languages",
         nargs="+",
         help="Source languages (non-English) to translate into English (wmt19 only).",
@@ -267,26 +336,33 @@ if __name__ == "__main__":
             f"{dataset_info['val_exposures_per_run']:.2f}x",
         )
 
+    scale_key = args.scale
+    scale_preset = SCALE_PRESETS[scale_key]
+    optim_preset = scale_preset["optim"]
+    max_grad_norm = optim_preset.get("max_grad_norm")
+    print(f"Scale preset: {scale_key}")
+
     if args.model == "bdh":
-        model = bdh.BDH(BDH_CONFIG).to(device)
-        lr = LEARNING_RATE
-        weight_decay = WEIGHT_DECAY
-        dropout = BDH_CONFIG.dropout
+        bdh_kwargs = scale_preset["bdh"].copy()
+        bdh_config = bdh.BDHConfig(**bdh_kwargs)
+        model = bdh.BDH(bdh_config).to(device)
+        lr = optim_preset["bdh"]["lr"]
+        weight_decay = optim_preset["bdh"]["weight_decay"]
+        dropout = bdh_config.dropout
+        model_config_meta = {"architecture": "bdh", **bdh_kwargs}
     else:
-        dropout = 0.0
-        lr = TRANSFORMER_LEARNING_RATE
-        weight_decay = TRANSFORMER_WEIGHT_DECAY
+        transformer_kwargs = scale_preset["transformer"].copy()
+        vocab_size = transformer_kwargs.pop("vocab_size", 256)
         transformer_config = VanillaTransformerConfig(
-            vocab_size=BDH_CONFIG.vocab_size,
+            vocab_size=vocab_size,
             block_size=BLOCK_SIZE,
-            # Match BDH's parameter budget (~25.3M) with a more balanced GPT-style layout
-            n_layer=8,
-            n_head=8,
-            n_embd=312,
-            dropout=dropout,
-            mlp_hidden_multiplier=14,
+            **transformer_kwargs,
         )
         model = VanillaTransformer(transformer_config).to(device)
+        lr = optim_preset["transformer"]["lr"]
+        weight_decay = optim_preset["transformer"]["weight_decay"]
+        dropout = transformer_config.dropout
+        model_config_meta = {"architecture": "transformer", "vocab_size": vocab_size, **transformer_kwargs}
 
     model = torch.compile(model)
     optimizer = torch.optim.AdamW(
@@ -319,6 +395,9 @@ if __name__ == "__main__":
             "learning_rate": lr,
             "weight_decay": weight_decay,
             "dropout": dropout,
+            "scale": scale_key,
+            "model_config": model_config_meta,
+            "max_grad_norm": max_grad_norm,
             "dataset": dataset_info.get("dataset_name"),
             "dataset_languages": languages,
             "dataset_base_language": base_language,
@@ -361,8 +440,8 @@ if __name__ == "__main__":
             scaler.unscale_(optimizer)
         grad_norm = compute_grad_norm(model.parameters())
 
-        if MAX_GRAD_NORM is not None:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), MAX_GRAD_NORM)
+        if max_grad_norm is not None:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
 
         scaler.step(optimizer)
         scaler.update()

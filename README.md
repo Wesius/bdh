@@ -62,6 +62,10 @@ python train.py --model bdh
 # train the parameter-matched vanilla Transformer on the same data
 python train.py --model transformer
 
+# scale both architectures ~10× (≈250M params)
+python train.py --model bdh --scale 10x
+python train.py --model transformer --scale 10x
+
 # optionally fall back to the tiny Shakespeare language-modeling demo
 python train.py --dataset tinyshakespeare --model bdh
 
@@ -69,7 +73,7 @@ python train.py --dataset tinyshakespeare --model bdh
 python train.py --dataset wmt19 --languages fi de --max-train-examples 50000
 ```
 
-Each training run now streams detailed metrics (train/validation losses, running averages, gradient norms, learning rate, wall-clock timings, and token counts) into timestamped JSON files under `metrics/train_metrics_<model>_<run_id>.json`, flushing updates every 100 optimization steps. Run `python plot.py` after training to overlay BDH and Transformer curves; combined four-line charts (`..._combined.png`), separate train/val overlays (`..._train.png`, `..._val.png`), and per-model train-vs-val plots (`<model>_*_train_val.png`) are written to `plots/` by default. Training metadata now reports dataset/token statistics, including approximate token exposures per run—useful for comparing how often each model sees the source translations. Default translation experiments cover German→English and Czech→English (the largest WMT19 source corpora beyond English), but you can supply any supported language codes via `--languages`.
+Each training run now streams detailed metrics (train/validation losses, running averages, gradient norms, learning rate, wall-clock timings, and token counts) into timestamped JSON files under `metrics/train_metrics_<model>_<run_id>.json`, flushing updates every 100 optimization steps. Run `python plot.py` after training to overlay BDH and Transformer curves; combined four-line charts (`..._combined.png`), separate train/val overlays (`..._train.png`, `..._val.png`), and per-model train-vs-val plots (`<model>_*_train_val.png`) are written to `plots/` by default. Training metadata now reports dataset/token statistics, including approximate token exposures per run—useful for comparing how often each model sees the source translations. Default translation experiments cover German→English and Czech→English (the largest WMT19 source corpora beyond English), but you can supply any supported language codes via `--languages`. Use `--scale {1x,3x,10x}` to toggle parameter presets that grow both architectures in lockstep (1× is the legacy 25 M-parameter baseline).
 
 <!--For visualization and interpretability analysis, explore the example notebooks in `notebooks/`.-->
 
