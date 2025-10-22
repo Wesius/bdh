@@ -47,6 +47,8 @@ print(f"Using device: {device} with dtype {dtype}")
 
 BLOCK_SIZE = 512
 BATCH_SIZE = 32
+DEFAULT_BLOCK_SIZE = 512
+DEFAULT_BATCH_SIZE = 32
 MAX_ITERS = 3000
 LOG_FREQ = 100
 EVAL_ITERS = 20
@@ -55,6 +57,10 @@ DATA_DIR = Path(__file__).resolve().parent / "data"
 split_memmaps: Dict[str, np.memmap] = {}
 split_lengths: Dict[str, int] = {}
 DATA_METADATA: Dict[str, Any] = {}
+
+# Runtime-overridable globals (set after argument parsing)
+BLOCK_SIZE = DEFAULT_BLOCK_SIZE
+BATCH_SIZE = DEFAULT_BATCH_SIZE
 
 
 SCALE_PRESETS = {
@@ -284,6 +290,23 @@ def parse_args():
         help="Model size preset relative to the 1x baseline",
     )
     parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=DEFAULT_BATCH_SIZE,
+        help="Micro-batch size (default: 32)",
+    )
+    parser.add_argument(
+        "--block-size",
+        type=int,
+        default=DEFAULT_BLOCK_SIZE,
+        help="Context length / block size (default: 512)",
+    )
+    parser.add_argument(
+        "--disable-compile",
+        action="store_true",
+        help="Disable torch.compile() to reduce memory usage",
+    )
+    parser.add_argument(
         "--languages",
         nargs="+",
         help="Source languages (non-English) to translate into English (wmt19 only).",
@@ -310,6 +333,9 @@ def parse_args():
 
 if __name__ == "__main__":
     args = parse_args()
+    BATCH_SIZE = args.batch_size
+    BLOCK_SIZE = args.block_size
+
     dataset_info = prepare_dataset(args)
     train_tokens = dataset_info.get("train_tokens", 0)
     val_tokens = dataset_info.get("val_tokens", 0)
@@ -325,6 +351,7 @@ if __name__ == "__main__":
         base_language,
     )
     print(f"Train tokens: {train_tokens:,} | Val tokens: {val_tokens:,}")
+    print(f"Batch size: {BATCH_SIZE} | Block size: {BLOCK_SIZE}")
     if dataset_info.get("train_exposures_per_run"):
         print(
             "Approx. train token exposures per run:",
@@ -364,7 +391,11 @@ if __name__ == "__main__":
         dropout = transformer_config.dropout
         model_config_meta = {"architecture": "transformer", "vocab_size": vocab_size, **transformer_kwargs}
 
-    model = torch.compile(model)
+    use_compile = not args.disable_compile
+    if use_compile:
+        model = torch.compile(model)
+    else:
+        print("Skipping torch.compile() to conserve memory")
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=lr, weight_decay=weight_decay
     )
@@ -395,6 +426,7 @@ if __name__ == "__main__":
             "learning_rate": lr,
             "weight_decay": weight_decay,
             "dropout": dropout,
+            "torch_compile": use_compile,
             "scale": scale_key,
             "model_config": model_config_meta,
             "max_grad_norm": max_grad_norm,

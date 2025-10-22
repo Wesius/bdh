@@ -66,6 +66,9 @@ python train.py --model transformer
 python train.py --model bdh --scale 10x
 python train.py --model transformer --scale 10x
 
+# if you hit GPU memory limits, lower the batch or skip torch.compile
+python train.py --model bdh --scale 10x --batch-size 16 --disable-compile
+
 # optionally fall back to the tiny Shakespeare language-modeling demo
 python train.py --dataset tinyshakespeare --model bdh
 
